@@ -10,245 +10,291 @@
 
 using namespace std;
 
-clock_t start_time = 0;
+clock_t training_start_time = 0;
 
-// Функция сигмоиды
-double sigmoid(double x) {
+// Вычисление сигмоиды
+double compute_sigmoid(double x) {
     return 1.0 / (1.0 + exp(-x));
 }
 
-// Функция для генерации случайного числа в диапазоне [-range, range).
-double random_double(double range) {
-    static random_device rd;
-    static mt19937 gen(rd());
-    uniform_real_distribution<double> dist(-range, range);
-    return dist(gen);
+// Генерация случайного веса в заданном диапазоне
+double generate_random_weight(double weight_range) {
+    static random_device entropy_source;
+    static mt19937 generator(entropy_source());
+    uniform_real_distribution<double> distribution(-weight_range, weight_range);
+    return distribution(generator);
 }
 
-// Загружает текст из файла, создаёт словарь и кодирует предложения в последовательность индексов.
-// Индексы присваиваются по частоте слова в тексте с ограничением на размер словаря
-vector<vector<int>> load_text(const string &filename, unordered_map<string, int> &word2index, vector<string> &index2word, int vocab_size) {
-    ifstream file(filename);
-    if (!file) {
-        cerr << "Ошибка при открытии файла!" << '\n';
+// Функция для загрузки текстовых данных, предобработки и построения словаря
+vector<vector<int>> load_and_preprocess_corpus(const string &corpus_file, unordered_map<string, int> &vocabulary_map, vector<string> &reverse_vocabulary, int max_vocab_size
+) {
+    ifstream input_file(corpus_file);
+    if (!input_file) {
+        cerr << "Ошибка открытия файла с корпусом!" << '\n';
         exit(1);
     }
 
-    // word_freq будет хранить сколько раз встречается каждое слово
-    unordered_map<string, int> word_freq;
-    // raw_sentences хранит предложения в виде векторов строк
-    vector<vector<string>> raw_sentences;
-    string line;
+    unordered_map<string, int> word_frequency; // Частота встречаемости слов
+    vector<vector<string>> tokenized_sentences; // Токенизированные предложения
+    string text_line;
 
-    // Читаем файл построчно
-    while (getline(file, line)) {
-        // Заменяем символы новой строки на пробелы
-        replace(line.begin(), line.end(), '\n', ' ');
-        replace(line.begin(), line.end(), '\r', ' ');
+    // Чтение файла построчно
+    while (getline(input_file, text_line)) {
+        replace(text_line.begin(), text_line.end(), '\n', ' ');
+        replace(text_line.begin(), text_line.end(), '\r', ' ');
         
-        istringstream iss(line);
-        vector<string> words((istream_iterator<string>(iss)), istream_iterator<string>());
+        // Разбиение строки на отдельные слова
+        istringstream line_stream(text_line);
+        vector<string> sentence_tokens(
+            (istream_iterator<string>(line_stream)), 
+            istream_iterator<string>()
+        );
         
-        for (string &word : words) {
-            // Удаляем пунктуацию
-            word.erase(remove_if(word.begin(), word.end(), 
-                      [](unsigned char c) { return ispunct(c); }), 
-                      word.end());
+        // Очистка и нормализация каждого токена в предложении
+        for (string &token : sentence_tokens) {
+            // Удаление пунктуации
+            token.erase(remove_if(token.begin(), token.end(), 
+                        [](unsigned char c) { return ispunct(c); }), 
+                        token.end());
             
-            // Приводим к нижнему регистру
-            transform(word.begin(), word.end(), word.begin(),
+            // Приведение к нижнему регистру
+            transform(token.begin(), token.end(), token.begin(),
                      [](unsigned char c) { return tolower(c); });
             
-            // Удаляем пустые строки после обработки
-            if (word.empty()) {
-                continue;
-            }
+            if (token.empty()) continue;
         }
         
-        // Удаляем пустые слова из предложения
-        words.erase(remove_if(words.begin(), words.end(), 
+        // Удаление пустых токенов из всего предложения
+        sentence_tokens.erase(
+            remove_if(sentence_tokens.begin(), sentence_tokens.end(), 
                    [](const string &w) { return w.empty(); }), 
-                   words.end());
+            sentence_tokens.end()
+        );
         
-        if (!words.empty()) {
-            raw_sentences.push_back(words);
-            for (const string &word : words) {
-                word_freq[word]++;
+        // Обновление частот слов
+        if (!sentence_tokens.empty()) {
+            tokenized_sentences.push_back(sentence_tokens);
+            for (const string &word : sentence_tokens) {
+                word_frequency[word]++;
             }
         }
     }
-    file.close();
+    input_file.close();
 
-    // Создаем вектор пар (частота, слово) для сортировки по частоте.
-    vector<pair<int, string>> sorted_words;
-    for (auto &p : word_freq) {
-        // if (p.second > 2)  // Отфильтровываем редкие слова (частота > 2)
-        sorted_words.push_back({p.second, p.first});
+    vector<pair<int, string>> sorted_vocabulary;
+    for (auto &entry : word_frequency) {
+        // Сохраняем пары (частота, слово) для сортировки
+        sorted_vocabulary.push_back({entry.second, entry.first});
     }
 
-    cout << "Количество уникальных слов: " << sorted_words.size() << '\n';
-    cout << endl;
-    // Сортировка по убыванию частоты
-    sort(sorted_words.rbegin(), sorted_words.rend());
+    cout << "Обнаружено уникальных слов: " << sorted_vocabulary.size() << '\n';
+    // Сортировка от наибольшей к наименьшей частоте
+    sort(sorted_vocabulary.rbegin(), sorted_vocabulary.rend());
 
-    // Ограничиваем словарь до указанного размера
-    if (sorted_words.size() > (size_t)vocab_size) sorted_words.resize(vocab_size);
-
-    // Заполняем отображения: word2index и index2word
-    for (size_t i = 0; i < sorted_words.size(); i++) {
-        word2index[sorted_words[i].second] = i;
-        index2word.push_back(sorted_words[i].second);
+    // Ограничение словаря до заданного размера
+    if (sorted_vocabulary.size() > (size_t)max_vocab_size) {
+        // Обрезаем вектор до max_vocab_size элементов
+        sorted_vocabulary.resize(max_vocab_size);
     }
 
-    cout << "Размер словаря: " << word2index.size() << '\n';
-    if (word2index.size() == vocab_size) cout << "[WARNING] Словарь заполнен до максимального размера." << '\n';
-
-    // Кодируем предложения: каждое слово заменяется на свой индекс, если оно есть в словаре
-    vector<vector<int>> sentences;
-    for (const auto &sentence : raw_sentences) {
-        vector<int> encoded;
-        for (const string &word : sentence)
-            if (word2index.count(word)) encoded.push_back(word2index[word]);
-        if (!encoded.empty()) sentences.push_back(encoded);
+    // Построение взаимных отображений между словами и индексами
+    for (size_t i = 0; i < sorted_vocabulary.size(); i++) {
+        const string &word = sorted_vocabulary[i].second;
+        const int index = i;
+        vocabulary_map[word] = index;          // Слово -> индекс
+        reverse_vocabulary.push_back(word);    // Индекс -> слово
     }
 
-    return sentences;
+    cout << "Фактический размер словаря: " << vocabulary_map.size() << '\n';
+
+    // Преобразование текста в последовательности числовых индексов
+    vector<vector<int>> encoded_sentences;
+    for (const auto &sentence : tokenized_sentences) {
+        vector<int> encoded_sentence;
+        for (const string &word : sentence) {
+            if (vocabulary_map.count(word)) {
+                // Заменяем слово его индексом из словаря
+                encoded_sentence.push_back(vocabulary_map[word]);
+            }
+        }
+        if (!encoded_sentence.empty()) {
+            encoded_sentences.push_back(encoded_sentence);
+        }
+    }
+
+    return encoded_sentences;
 }
+// Word2Vec
+void train_word_embeddings(const vector<vector<int>> &encoded_sentences, int vocabulary_size, int embedding_dim, int context_window, int negative_samples, int training_epochs, float learning_rate, vector<vector<double>> &embedding_matrix
+) {
+    // Инициализация матрицы эмбеддингов случайными значениями
+    embedding_matrix.assign(vocabulary_size, vector<double>(embedding_dim));
+    const double init_range = 0.5 / embedding_dim;
+    
+    for (int word_idx = 0; word_idx < vocabulary_size; word_idx++) {
+        for (int dim = 0; dim < embedding_dim; dim++) {
+            embedding_matrix[word_idx][dim] = generate_random_weight(init_range);
+        }
+    }
 
-// Обучение эмбеддингов
-void train_word2vec(const vector<vector<int>> &sentences, int vocab_size, int d, int window_size, int k, int epochs, double lr,
-                    vector<vector<double>> &word_vectors) {
-    // Инициализируем матрицу эмбеддингов: для каждого слова в словаре выделяем вектор размерности d
-    word_vectors.assign(vocab_size, vector<double>(d));
+    // Настройка генератора случайных чисел для отрицательного сэмплирования
+    random_device entropy_source;
+    mt19937 generator(entropy_source());
+    uniform_int_distribution<int> negative_sampler(0, vocabulary_size - 1);
 
-    // Инициализация эмбеддингов случайными значениями в диапазоне [-0.5/d, 0.5/d]
-    for (int i = 0; i < vocab_size; i++)
-        for (int j = 0; j < d; j++) word_vectors[i][j] = random_double(0.5 / d);
+    // Основной цикл обучения
+    for (int epoch = 0; epoch < training_epochs; epoch++) {
+        auto epoch_start = clock();
+        double epoch_loss = 0.0;
+        int processed_pairs = 0;
 
-    // Настраиваем генератор случайных чисел для отрицательного сэмплинга
-    random_device rd;
-    mt19937 gen(rd());
-    // Используем равномерное распределение по индексам от 0 до vocab_size-1 для выбора отрицательных примеров
-    uniform_int_distribution<int> neg_sample(0, vocab_size - 1);
+        // Итерация по всем предложениям корпуса
+        for (const auto &sentence : encoded_sentences) {
+            int sentence_length = sentence.size();
+            
+            // Обработка каждого слова в предложении как целевого
+            for (int target_pos = 0; target_pos < sentence_length; target_pos++) {
+                int target_word_idx = sentence[target_pos]; // Индекс текущего целевого слова
 
-    // Основной цикл по эпохам обучения
-    for (int epoch = 0; epoch < epochs; epoch++) {
-        auto start_epoch = clock();
-        double total_loss = 0.0;
-        int count = 0;  // Счётчик обработанных примеров
+                // Определение границ контекстного окна
+                // [target_pos - window, target_pos + window] 
+                int window_start = max(0, target_pos - context_window);
+                int window_end = min(sentence_length, target_pos + context_window + 1);
+                
+                // Итерация по словам в контекстном окне
+                for (int context_pos = window_start; context_pos < window_end; context_pos++) {
+                    if (context_pos == target_pos) continue; // Пропуск  целевого слова
+                    int context_word_idx = sentence[context_pos]; // Индекс слова контекста
 
-        // Проходим по каждому предложению
-        for (const auto &sentence : sentences) {
-            int n = sentence.size();
-            // Проходим по каждому слову в предложении
-            for (int i = 0; i < n; i++) {
-                int target = sentence[i];  // Текущее целевое слово
+                    /*** Обучение на положительном примере (target + context) ***/
+                    
+                    // Вычисление скалярного произведения векторов (v_target * v_context)
+                    double dot_product = 0.0;
+                    for (int dim = 0; dim < embedding_dim; dim++) {
+                        dot_product += embedding_matrix[target_word_idx][dim] * 
+                                      embedding_matrix[context_word_idx][dim];
+                    }
+                    
+                    // Преобразование в вероятность с помощью сигмоиды
+                    double positive_prob = compute_sigmoid(dot_product);
+                    
+                    double prediction_error = positive_prob - 1.0;
+                    
+                    // Накопление значения функции потерь: -log(sig(v*u))
+                    epoch_loss += -log(positive_prob + 1e-8); // +1e-8 для численной стабильности
 
-                // Определяем контекстное окно для текущего слова:
-                // слова от max(0, i - window_size) до min(n, i + window_size + 1) / влево и вправо на window_size
-                for (int j = max(0, i - window_size); j < min(n, i + window_size + 1); j++) {
-                    if (j == i) continue;  // Пропускаем само целевое слово
-                    int context = sentence[j];
-
-                    // Обработка положительного примера
-
-                    // Вычисляем скалярное произведение целевого и контекстного векторов:
-                    // dot = sum(v_target[z] * v_context[z]) по z от 0 до d-1.
-                    double dot = 0.0;
-                    for (int z = 0; z < d; z++) dot += word_vectors[target][z] * word_vectors[context][z];
-
-                    // Применяем сигмоиду для получения вероятности:
-                    // pos_pred = sig(dot)
-                    double pos_pred = sigmoid(dot);
-                    // Градиент для положительного примера grad = (sig(dot) - 1)  (истинное значение = 1)
-                    double grad = pos_pred - 1.0;
-                    // Лосс для положительного примера: -log(sig(dot))
-                    total_loss += -log(pos_pred + 1e-8);
-
-                    // Обновляем векторы для положительного примера:
-                    // v_target = v_target - lr * grad * v_context
-                    // v_context = v_context - lr * grad * v_target (старое значение v_target)
-                    for (int z = 0; z < d; z++) {
-                        double temp = word_vectors[target][z];
-                        word_vectors[target][z] -= lr * grad * word_vectors[context][z];
-                        word_vectors[context][z] -= lr * grad * temp;
+                    // Обновление векторов через градиентный спуск
+                    // v_target = v_target - lr * (sig(v*u) - 1) * v_context
+                    // v_context = v_context - lr * (sig(v*u) - 1) * v_target
+                    for (int dim = 0; dim < embedding_dim; dim++) {
+                        double target_cache = embedding_matrix[target_word_idx][dim];
+                        embedding_matrix[target_word_idx][dim] -= learning_rate * prediction_error * 
+                                                                embedding_matrix[context_word_idx][dim];
+                        embedding_matrix[context_word_idx][dim] -= learning_rate * prediction_error * 
+                                                                 target_cache;
                     }
 
-                    // Обработка отрицательных примеров
+                    /*** Обучение на негативных примерах (target + random words) ***/
+                    for (int sample = 0; sample < negative_samples; sample++) {
+                        int negative_word_idx = negative_sampler(generator); // Случайное слово из словаря
+                        
+                        // Вычисление скалярного произведения с негативным примером
+                        double negative_dot = 0.0;
+                        for (int dim = 0; dim < embedding_dim; dim++) {
+                            negative_dot += embedding_matrix[target_word_idx][dim] * 
+                                         embedding_matrix[negative_word_idx][dim];
+                        }
+                        
+                        // Преобразование в вероятность: sig(v*u_neg)
+                        double negative_prob = compute_sigmoid(negative_dot);
+                        
+                        // Ошибка для негативного примера: sig(v*u_neg) - 0 (целевое значение = 0)
+                        double negative_error = negative_prob;
+                        
+                        // Накопление значения функции потерь: -log(1 - sig(v*u_neg))
+                        epoch_loss += -log(1.0 - negative_prob + 1e-8);
 
-                    // Для одного положительного примера выбираем k отрицательных примеров
-                    for (int neg = 0; neg < k; neg++) {
-                        // Выбираем случайное слово из словаря как отрицательный пример
-                        int neg_word = neg_sample(gen);
-                        // Вычисляем dot для отрицательной пары (target, neg_word)
-                        double dot_neg = 0.0;
-                        for (int z = 0; z < d; z++) dot_neg += word_vectors[target][z] * word_vectors[neg_word][z];
-
-                        // Применяем сигмоиду: получаем вероятность того, что пара встречается
-                        double neg_pred = sigmoid(dot_neg);
-                        // Лосс для отрицательного примера: -log(1 - sig(dot_neg))
-                        total_loss += -log(1.0 - neg_pred + 1e-8);
-                        // Градиент для отрицательного примера sig(dot_neg), истинное значение = 0
-                        double neg_grad = neg_pred;
-
-                        // Обновляем векторы для отрицательного примера
-                        for (int z = 0; z < d; z++) {
-                            double temp = word_vectors[target][z];
-                            word_vectors[target][z] -= lr * neg_grad * word_vectors[neg_word][z];
-                            word_vectors[neg_word][z] -= lr * neg_grad * temp;
+                        // Обновление векторов через градиентный спуск
+                        // v_target = v_target - lr * sig(v*u_neg) * v_neg
+                        // v_neg = v_neg - lr * sig(v*u_neg) * v_target
+                        for (int dim = 0; dim < embedding_dim; dim++) {
+                            double target_cache = embedding_matrix[target_word_idx][dim];
+                            embedding_matrix[target_word_idx][dim] -= learning_rate * negative_error * 
+                                                                    embedding_matrix[negative_word_idx][dim];
+                            embedding_matrix[negative_word_idx][dim] -= learning_rate * negative_error * 
+                                                                      target_cache;
                         }
                     }
-                    // Увеличиваем счётчик обработанных примеров (каждая пара считается одним примером)
-                    count++;
+                    processed_pairs++; // Учет обработанной пары (1 позитивная + k негативных)
                 }
             }
         }
-        // Вывод средней ошибки за эпоху, время выполнения эпохи и общее время с начала обучения
-        cout << "Эпоха " << epoch + 1 << " | Средняя ошибка: " << total_loss / count << " | Время: " << double(clock() - start_epoch) / CLOCKS_PER_SEC << " сек"
+        
+        cout << "Эпоха " << epoch + 1 
+             << " | Средняя ошибка: " << epoch_loss / processed_pairs
+             << " | Длительность: " << double(clock() - epoch_start) / CLOCKS_PER_SEC 
              << " сек" << endl;
     }
 }
 
-// Сохраняет обученные эмбеддинги в файл.
-//   vocab_size d – количество слов и размерность векторов.
-//   vocab_size слов и соответсвующих векторов
-void save_embeddings(const string &filename, const vector<vector<double>> &embeddings, const vector<string> &index2word) {
-    ofstream ofs(filename);
-    ofs << index2word.size() << " " << embeddings[0].size() << "\n";
-    for (size_t i = 0; i < index2word.size(); i++) {
-        ofs << index2word[i];
-        for (double val : embeddings[i]) ofs << " " << val;
-        ofs << "\n";
+// Сохранение обученных векторных представлений
+void save_word_vectors(
+    const string &output_file,
+    const vector<vector<double>> &embedding_matrix,
+    const vector<string> &reverse_vocabulary
+) {
+    ofstream output_stream(output_file);
+    output_stream << reverse_vocabulary.size() << " " << embedding_matrix[0].size() << "\n";
+    for (size_t word_idx = 0; word_idx < reverse_vocabulary.size(); word_idx++) {
+        output_stream << reverse_vocabulary[word_idx];
+        for (double value : embedding_matrix[word_idx]) {
+            output_stream << " " << value;
+        }
+        output_stream << "\n";
     }
 }
 
 int main() {
-    string sentences_path = "books.txt";
-    string embeddings_path = "embeddings_500.txt";
-    int d = 500;
+    const string corpus_path = "books.txt";
+    const string embeddings_output = "embeddings_1000.txt";
+    const int embedding_dimension = 1000;
+    const int vocabulary_limit = 50000;
+    const int context_window_size = 4;
+    const int negative_samples_count = 5;
+    const int total_epochs = 5;
+    const float initial_learning_rate = 0.025;
 
-    int vocab_size = 50000;
-    int window_size = 4;
-    int k = 5;
-    int epochs = 5;
-    double lr = 0.025;
+    training_start_time = clock();
 
-    start_time = clock();
+    // Инициализация структур данных
+    unordered_map<string, int> word_to_index;
+    vector<string> index_to_word;
+    vector<vector<int>> processed_sentences = load_and_preprocess_corpus(
+        corpus_path, 
+        word_to_index, 
+        index_to_word, 
+        vocabulary_limit
+    );
 
-    // Создаем word2index и index2word, и кодируем предложения
-    unordered_map<string, int> word2index;
-    vector<string> index2word;
-    vector<vector<int>> sentences = load_text(sentences_path, word2index, index2word, vocab_size);
+    // Обучение модели
+    vector<vector<double>> embeddings;
+    train_word_embeddings(
+        processed_sentences,
+        vocabulary_limit,
+        embedding_dimension,
+        context_window_size,
+        negative_samples_count,
+        total_epochs,
+        initial_learning_rate,
+        embeddings
+    );
 
-    // Обучаем эмбеддинги
-    vector<vector<double>> word_vectors;
-    train_word2vec(sentences, vocab_size, d, window_size, k, epochs, lr, word_vectors);
+    // Сохранение результатов
+    save_word_vectors(embeddings_output, embeddings, index_to_word);
 
-    // Сохраняем обученные эмбеддинги в файл
-    save_embeddings(embeddings_path, word_vectors, index2word);
-
-    auto end_time = clock();
-    double elapsed_time = double(end_time - start_time) / CLOCKS_PER_SEC;
-    cout << "Обучение завершено. Эмбеддинги сохранены в " << embeddings_path << endl;
+    auto training_end = clock();
+    double total_time = double(training_end - training_start_time) / CLOCKS_PER_SEC;
+    cout << "Обучение завершено за " << total_time << " секунд. Результаты сохранены в " 
+         << embeddings_output << endl;
     return 0;
 }
