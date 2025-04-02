@@ -100,7 +100,6 @@ vector<vector<int>> load_text(const string &filename, unordered_map<string, int>
         index2word.push_back(sorted_words[i].second);
     }
 
-    cout << " (" << double(clock() - start_time) / CLOCKS_PER_SEC << " сек)" << '\n';
     cout << "Размер словаря: " << word2index.size() << '\n';
     if (word2index.size() == vocab_size) cout << "[WARNING] Словарь заполнен до максимального размера." << '\n';
 
@@ -224,14 +223,14 @@ void save_embeddings(const string &filename, const vector<vector<double>> &embed
 }
 
 int main() {
-    string sentences_path = "text.txt";
+    string sentences_path = "books.txt";
     string embeddings_path = "embeddings_500.txt";
     int d = 500;
 
-    int vocab_size = 200000;
+    int vocab_size = 50000;
     int window_size = 4;
     int k = 5;
-    int epochs = 10;
+    int epochs = 5;
     double lr = 0.025;
 
     start_time = clock();
