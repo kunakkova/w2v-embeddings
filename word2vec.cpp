@@ -168,7 +168,7 @@ void train_word_embeddings(const vector<vector<int>> &encoded_sentences, int voc
 
                     /*** Обучение на положительном примере (target + context) ***/
                     
-                    // Вычисление скалярного произведения векторов (v_target * v_context)
+                    // Вычисление скалярного произведения векторов v_target и v_context
                     double dot_product = 0.0;
                     for (int dim = 0; dim < embedding_dim; dim++) {
                         dot_product += embedding_matrix[target_word_idx][dim] * 
@@ -180,12 +180,12 @@ void train_word_embeddings(const vector<vector<int>> &encoded_sentences, int voc
                     
                     double prediction_error = positive_prob - 1.0;
                     
-                    // Накопление значения функции потерь: -log(sig(v*u))
+                    // Накопление значения функции потерь: -log(sig(target*context))
                     epoch_loss += -log(positive_prob + 1e-8); // +1e-8 для численной стабильности
 
                     // Обновление векторов через градиентный спуск
-                    // v_target = v_target - lr * (sig(v*u) - 1) * v_context
-                    // v_context = v_context - lr * (sig(v*u) - 1) * v_target
+                    // v_target = v_target - lr * (sig(target*context) - 1) * v_context
+                    // v_context = v_context - lr * (sig(target*context) - 1) * v_target
                     for (int dim = 0; dim < embedding_dim; dim++) {
                         double target_cache = embedding_matrix[target_word_idx][dim];
                         embedding_matrix[target_word_idx][dim] -= learning_rate * prediction_error * 
@@ -205,18 +205,18 @@ void train_word_embeddings(const vector<vector<int>> &encoded_sentences, int voc
                                          embedding_matrix[negative_word_idx][dim];
                         }
                         
-                        // Преобразование в вероятность: sig(v*u_neg)
+                        // Преобразование в вероятность: sig(target*negative)
                         double negative_prob = compute_sigmoid(negative_dot);
                         
-                        // Ошибка для негативного примера: sig(v*u_neg) - 0 (целевое значение = 0)
+                        // Ошибка для негативного примера: sig(target*negative) - 0 (целевое значение = 0)
                         double negative_error = negative_prob;
                         
-                        // Накопление значения функции потерь: -log(1 - sig(v*u_neg))
+                        // Накопление значения функции потерь: -log(1 - sig(target*negative))
                         epoch_loss += -log(1.0 - negative_prob + 1e-8);
 
                         // Обновление векторов через градиентный спуск
-                        // v_target = v_target - lr * sig(v*u_neg) * v_neg
-                        // v_neg = v_neg - lr * sig(v*u_neg) * v_target
+                        // v_target = v_target - lr * sig(target*negative) * v_neg
+                        // v_neg = v_neg - lr * sig(target*negative) * v_target
                         for (int dim = 0; dim < embedding_dim; dim++) {
                             double target_cache = embedding_matrix[target_word_idx][dim];
                             embedding_matrix[target_word_idx][dim] -= learning_rate * negative_error * 
